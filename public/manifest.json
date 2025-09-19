@@ -7,6 +7,7 @@
     "https://*/*",
     "http://*/*"
   ],
+  "permissions": ["scripting", "tabs"],
   "action": {
     "default_popup": "index.html"
   }
