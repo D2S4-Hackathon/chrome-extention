@@ -1,9 +1,21 @@
+import axios from "axios";
 import { useState, useRef, useEffect } from "react";
 
+
+// import MicrophoneIcon from '../assets/svgs/microphone.svg?react'
+import useStorageStore from "../stores/useStorageStore";
+
 export default function Recorder() {
+  const {
+    ask,
+    answer,
+    setAsk,
+    setAnswer,
+  } = useStorageStore();
+
   const [isRecording, setIsRecording] = useState(false);
-  const [audioURL, setAudioURL] = useState<string | null>(null);
-  const [innerText, setInnerText] = useState<string>("");
+  const [isPendingStt, setIsPendingStt] = useState(false);
+  const [isPendingAnswer, setIsPendingAnswer] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -12,9 +24,11 @@ export default function Recorder() {
   // 녹음 시작
   const startRecording = async () => {
     try {
+      setIsPendingStt(true)
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
+      // 녹음용 MediaRecoder
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
@@ -25,16 +39,28 @@ export default function Recorder() {
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
+        // 음성 파일 (추후 서버에 보낼 blob)
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        const url = URL.createObjectURL(blob);
-        setAudioURL(url);
+
+        const formData = new FormData();
+        formData.append("audio_file", blob)
+        formData.append("lang", "Kor")
+
+        const response: SttResponse = await axios.post('http://localhost:8000/stt', formData, {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          }
+        });
+        setAsk(response.data.text || "")
       };
 
       mediaRecorder.start();
       setIsRecording(true);
     } catch (err) {
       console.error("마이크 접근 실패:", err);
+    } finally {
+      setIsPendingStt(false)
     }
   };
 
@@ -52,6 +78,25 @@ export default function Recorder() {
     }
   };
 
+  // 페이지에 대한 질문
+  const askGpt = async () => {
+    try {
+      setIsPendingAnswer(true)
+      const response = await axios.post('http://localhost:8000/content/ask',
+        {
+          query: ask
+        })
+      setAnswer(response.data.response)
+      if (response.data.url) {
+        chrome.tabs.create({ url: response.data.url });
+      }
+    } catch (error) {
+      alert(error)
+    } finally {
+      setIsPendingAnswer(false)
+    }
+  }
+
   // 🔧 언마운트 시 스트림 정리
   useEffect(() => {
     return () => {
@@ -61,52 +106,27 @@ export default function Recorder() {
     };
   }, []);
 
-  // 현재 페이지 텍스트 가져오기
-  useEffect(() => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tabId = tabs[0]?.id;
-      if (!tabId) return;
-
-      chrome.scripting.executeScript(
-        {
-          target: { tabId },
-          func: () => document.body.innerText
-        },
-        (results) => {
-          if (chrome.runtime.lastError) {
-            console.error("페이지 텍스트 가져오기 실패:", chrome.runtime.lastError.message);
-            return;
-          }
-          if (results && results[0]?.result) {
-            setInnerText(results[0].result);
-          }
-        }
-      );
-    });
-  }, []);
-
   return (
-    <div className="p-4">
+    <div className="p-4 flex flex-col items-center">
       <h1>🎙️ 음성 녹음</h1>
-      <p style={{ whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto" }}>
-        {innerText}
-      </p>
-
       {!isRecording ? (
-        <button onClick={startRecording}>녹음 시작</button>
+        <button onClick={startRecording} disabled={isPendingStt || isPendingAnswer}>녹음 시작</button>
       ) : (
         <button onClick={stopRecording}>녹음 종료</button>
       )}
-
-      {audioURL && (
-        <div>
-          <h2>재생 & 다운로드</h2>
-          <audio src={audioURL} controls />
-          <a href={audioURL} download="recording.webm">
-            다운로드
-          </a>
-        </div>
+      {isPendingStt ? (
+        <>TTS 요청중</>
+      ) : (
+        !isPendingStt && ask.trim() !== "" && (
+          <>{ask}</>
+        )
       )}
+      <button onClick={askGpt} disabled={isRecording || isPendingStt || isPendingAnswer}>물어보기</button>
+      {answer.trim() !== "" &&
+        <p>
+          {answer}
+        </p>
+      }
     </div>
   );
 }
