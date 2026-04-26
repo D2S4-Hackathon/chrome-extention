@@ -1,5 +1,19 @@
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
+import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
+
+// chrome.storage용 커스텀 스토리지 어댑터
+const chromeStorageAdapter: StateStorage = {
+  getItem: async (name: string): Promise<string | null> => {
+    const result = await chrome.storage.local.get(name);
+    return result[name] || null;
+  },
+  setItem: async (name: string, value: string): Promise<void> => {
+    await chrome.storage.local.set({ [name]: value });
+  },
+  removeItem: async (name: string): Promise<void> => {
+    await chrome.storage.local.remove(name);
+  },
+};
 
 interface TextState {
   innerText: string;
@@ -38,7 +52,7 @@ const useStorageStore = create<TextState>()(
     }),
     {
       name: "text-storage",
-      storage: createJSONStorage(() => localStorage), // <- 이 부분이 포인트
+      storage: createJSONStorage(() => chromeStorageAdapter),
     }
   ),
 );
